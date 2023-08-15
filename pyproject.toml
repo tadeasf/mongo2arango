@@ -1,0 +1,26 @@
+[tool.poetry]
+name = "mongo2arango"
+version = "0.1.0"
+license = "MIT"
+description = "A tool to migrate data from MongoDB to ArangoDB."
+authors = ["tadeasf <taddy.fort@gmail.com>"]
+readme = "README.md"
+long_description = { file = "README.md", content_type = "text/markdown" }
+
+[tool.poetry.dependencies]
+python = "^3.9"
+python-arango = "7.1.0"
+arango-orm = "^0.7.2"
+pymongo = "^4.4.1"
+six = "^1.16.0"
+python-dotenv = "^1.0.0"
+ijson = "^3.2.3"
+simplejson = "^3.19.1"
+click = "^8.1.6"
+
+[tool.poetry.scripts]
+mongo2arango = 'mongo2arango.mongo2arango_cli:cli'
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
