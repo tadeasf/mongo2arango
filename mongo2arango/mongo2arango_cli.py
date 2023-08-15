@@ -4,11 +4,11 @@ import ijson
 from arango_orm import Database, Collection
 from arango_orm.fields import Field
 from arango import ArangoClient
-import threading
-from queue import Queue
 from concurrent.futures import ThreadPoolExecutor
+from queue import Queue
 import os
 from dotenv import load_dotenv
+import glob
 
 
 @click.group()
@@ -42,64 +42,7 @@ ARANGODB_USER = os.environ.get("ARANGODB_USER")
 ARANGODB_PW = os.environ.get("ARANGODB_PW")
 
 
-@cli.command()
-@click.option(
-    "--db", "-d", required=False, type=str, help="Name of the target ArangoDB database."
-)
-@click.option(
-    "--col",
-    "-c",
-    required=False,
-    type=str,
-    help="Name of the target ArangoDB collection.",
-)
-@click.option(
-    "--input", "-i", required=False, type=str, help="Path to the input JSON file."
-)
-@click.option(
-    "--key",
-    "-K",
-    default="_id",
-    type=str,
-    help="Name of the MongoDB field to map as _key. Default is _id.",
-)
-@click.option(
-    "--threads",
-    "-t",
-    default=4,
-    type=int,
-    help="Number of threads to use. Default is 4.",
-)
-@click.help_option("--help", "-h")
-def migrate(db=None, col=None, input=None, key=None, threads=None):
-    if not db:
-        db = click.prompt("Name of the target ArangoDB database", type=str)
-    if not col:
-        col = click.prompt("Name of the target ArangoDB collection", type=str)
-    if not input:
-        while True:
-            input = click.prompt("Path to the input JSON file", type=str)
-            if os.path.exists(input) and input.endswith(".json"):
-                break
-            else:
-                click.echo("Invalid JSON file path. Please provide a valid path.")
-    if not key:
-        key = click.prompt(
-            "Name of the MongoDB field to map as _key", type=str, default="_id"
-        )
-    if not threads:
-        while True:
-            try:
-                threads = click.prompt("Number of threads to use", type=int, default=4)
-                if isinstance(threads, int) and threads > 0:
-                    break
-                else:
-                    raise ValueError
-            except ValueError:
-                click.echo(
-                    "Invalid number of threads. Please provide a positive integer."
-                )
-
+def migrate_core(db, col, input, key, threads):
     # ArangoDB connection
     client = ArangoClient(hosts=ARANGODB_HOST, serializer=dumps, deserializer=loads)
 
@@ -193,7 +136,113 @@ def migrate(db=None, col=None, input=None, key=None, threads=None):
                 processed_docs += batch_processed
                 bar.update(batch_processed)
 
+
+@cli.command()
+@click.option(
+    "--db", "-d", required=False, type=str, help="Name of the target ArangoDB database."
+)
+@click.option(
+    "--col",
+    "-c",
+    required=False,
+    type=str,
+    help="Name of the target ArangoDB collection.",
+)
+@click.option(
+    "--input", "-i", required=False, type=str, help="Path to the input JSON file."
+)
+@click.option(
+    "--key",
+    "-k",
+    required=False,
+    type=str,
+    default="_id",
+    help="Name of the field to use as the ArangoDB document key.",
+)
+@click.option(
+    "--threads",
+    "-t",
+    required=False,
+    type=int,
+    default=4,
+    help="Number of threads to use for migration.",
+)
+def migrate(db=None, col=None, input=None, key=None, threads=None):
+    if not db:
+        db = click.prompt("Name of the target ArangoDB database", type=str)
+    if not col:
+        col = click.prompt("Name of the target ArangoDB collection", type=str)
+    if not input:
+        input = click.prompt("Path to the input JSON file", type=str)
+    if not key:
+        key = click.prompt(
+            "Name of the MongoDB field to map as the ArangoDB document key",
+            type=str,
+            default="_id",
+        )
+    if not threads:
+        threads = click.prompt(
+            "Number of threads to use for migration", type=int, default=4
+        )
+
+    migrate_core(db, col, input, key, threads)
     print("Migration completed!")
+
+
+@cli.command()
+@click.option(
+    "--db", "-d", required=False, type=str, help="Name of the target ArangoDB database."
+)
+@click.option(
+    "--dir",
+    "-dir",
+    required=False,
+    type=str,
+    help="Directory containing JSON files for bulk migration.",
+)
+@click.option(
+    "--key",
+    "-k",
+    required=False,
+    type=str,
+    default="_id",
+    help="Name of the field to use as the ArangoDB document key.",
+)
+@click.option(
+    "--threads",
+    "-t",
+    required=False,
+    type=int,
+    default=4,
+    help="Number of threads to use for migration.",
+)
+def migrate_bulk(db=None, dir=None, key=None, threads=None):
+    if not db:
+        db = click.prompt("Name of the target ArangoDB database", type=str)
+    if not dir:
+        dir = click.prompt(
+            "Directory containing JSON files for bulk migration", type=str
+        )
+    if not key:
+        key = click.prompt(
+            "Name of the MongoDB field to map as the ArangoDB document key",
+            type=str,
+            default="_id",
+        )
+    if not threads:
+        threads = click.prompt(
+            "Number of threads to use for migration", type=int, default=4
+        )
+
+    json_files = glob.glob(os.path.join(dir, "*.json"))
+    total_collections = len(json_files)
+    processed_collections = 0
+
+    for json_file in json_files:
+        col = os.path.splitext(os.path.basename(json_file))[0]
+        migrate_core(db, col, json_file, key, threads)
+        processed_collections += 1
+        print(f"Processed {processed_collections}/{total_collections} collections.")
 
 
 def check_env_vars():

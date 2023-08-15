@@ -1,11 +1,17 @@
 [tool.poetry]
 name = "mongo2arango"
-version = "0.1.0"
+version = "0.2.0"
 license = "MIT"
 description = "A tool to migrate data from MongoDB to ArangoDB."
 authors = ["tadeasf <taddy.fort@gmail.com>"]
 readme = "README.md"
-long_description = { file = "README.md", content_type = "text/markdown" }
+keywords = ["mongodb", "arangodb", "migration"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
 
 [tool.poetry.dependencies]
 python = "^3.9"
