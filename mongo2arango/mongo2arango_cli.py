@@ -6,9 +6,17 @@ from arango_orm.fields import Field
 from arango import ArangoClient
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
+import queue
 import os
 from dotenv import load_dotenv
 import glob
+import logging
+
+logging.basicConfig(
+    filename="migration.log",
+    level=logging.DEBUG,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+)
 
 
 @click.group()
@@ -42,49 +50,93 @@ ARANGODB_USER = os.environ.get("ARANGODB_USER")
 ARANGODB_PW = os.environ.get("ARANGODB_PW")
 
 
-def migrate_core(db, col, input, key, threads):
-    # ArangoDB connection
-    client = ArangoClient(hosts=ARANGODB_HOST, serializer=dumps, deserializer=loads)
+def migrate_core(db, col, input, key, threads, update_option=False):
+    # Save the current logging level
+    current_log_level = logging.getLogger().getEffectiveLevel()
 
-    # Connect to the "_system" database to check if the specified database exists
-    system_db = client.db("_system", username=ARANGODB_USER, password=ARANGODB_PW)
-    if not system_db.has_database(db):
-        system_db.create_database(db)
+    # Set logging level to WARNING to suppress DEBUG and INFO messages
+    logging.getLogger().setLevel(logging.WARNING)
+    logging.info(f"Starting migration for collection: {col}")
 
-    # Now connect to the specified database
-    _db = client.db(db, username=ARANGODB_USER, password=ARANGODB_PW)
-    target_db = Database(_db)
+    try:
+        # ArangoDB connection
+        client = ArangoClient(hosts=ARANGODB_HOST, serializer=dumps, deserializer=loads)
+    except Exception as e:
+        logging.error(f"Error initializing ArangoClient: {e}")
+        return
 
-    # Dynamically create the collection class based on the provided col
-    CollectionClass = type(
-        col,
-        (Collection,),
-        {"__collection__": col, "_fields": {}},
-    )
+    try:
+        # Connect to the "_system" database to check if the specified database exists
+        system_db = client.db("_system", username=ARANGODB_USER, password=ARANGODB_PW)
+        if not system_db.has_database(db):
+            system_db.create_database(db)
+    except Exception as e:
+        logging.error(f"Error connecting to _system database or creating database: {e}")
+        return
 
-    # Register the collection with the database
-    if not target_db.has_collection(col):
-        target_db.create_collection(CollectionClass)
+    try:
+        # Now connect to the specified database
+        _db = client.db(db, username=ARANGODB_USER, password=ARANGODB_PW)
+        target_db = Database(_db)
+    except Exception as e:
+        logging.error(f"Error connecting to target database: {e}")
+        return
+
+    try:
+        # Dynamically create the collection class based on the provided col
+        CollectionClass = type(
+            col,
+            (Collection,),
+            {"__collection__": col, "_fields": {}},
+        )
+
+        # Register the collection with the database
+        if not target_db.has_collection(col):
+            target_db.create_collection(CollectionClass)
+    except Exception as e:
+        logging.error(f"Error creating or checking collection: {e}")
+        return
 
     # Define a function to process a batch of documents
     def process_batch(docs, progress_queue):
+        logging.debug(f"Processing batch of {len(docs)} documents.")
         docs_to_insert = []
         for doc in docs:
-            CollectionClass._fields = {k: Field(allow_none=True) for k in doc.keys()}
-            doc["_key"] = doc[key]
-            del doc[key]
-            entity = CollectionClass(**doc)
-            docs_to_insert.append(entity)
-            if len(docs_to_insert) == BULK_IMPORT_BATCH_SIZE:
+            try:
+                CollectionClass._fields = {
+                    k: Field(allow_none=True) for k in doc.keys()
+                }
+                if isinstance(doc[key], dict) and "$oid" in doc[key]:
+                    doc["_key"] = doc[key]["$oid"]
+                else:
+                    doc["_key"] = doc[key]
+                del doc[key]
+                entity = CollectionClass(**doc)
+                docs_to_insert.append(entity)
+                if len(docs_to_insert) == BULK_IMPORT_BATCH_SIZE:
+                    target_db.bulk_add(docs_to_insert)
+                    progress_queue.put(len(docs_to_insert))
+                    docs_to_insert = []
+            except Exception as e:
+                logging.error(f"Error processing document: {doc}. Error: {e}")
+        if docs_to_insert:
+            try:
                 target_db.bulk_add(docs_to_insert)
                 progress_queue.put(len(docs_to_insert))
-                docs_to_insert = []
-        if docs_to_insert:
-            target_db.bulk_add(docs_to_insert)
-            progress_queue.put(len(docs_to_insert))
+                logging.debug(f"Added {len(docs_to_insert)} documents to the database.")
+            except Exception as e:
+                logging.error(f"Error adding documents to the database: {e}")
 
     # Load data from the specified JSON file
     filename = input
+
+    try:
+        # Load data from the specified JSON file and determine the total number of documents to import
+        with open(filename, "r") as f:
+            total_docs = sum(1 for _ in ijson.items(f, "item"))
+    except Exception as e:
+        logging.error(f"Error reading input file or counting documents: {e}")
+        return
 
     # First, determine the total number of documents to import
     with open(filename, "r") as f:
@@ -111,30 +163,52 @@ def migrate_core(db, col, input, key, threads):
     # Create a thread-safe queue to track progress
     progress_queue = Queue()
 
-    # Use a thread pool to process each part concurrently
-    with ThreadPoolExecutor(max_workers=num_threads) as executor:
-        futures = []
-        with open(filename, "r") as f:
-            items = list(ijson.items(f, "item"))
-            for batch in split_data(items, THREAD_BATCH_SIZE):
-                futures.append(executor.submit(process_batch, batch, progress_queue))
+    try:
+        # Use a thread pool to process each part concurrently
+        with ThreadPoolExecutor(max_workers=num_threads) as executor:
+            futures = []
+            # After ThreadPoolExecutor block
+            for future in futures:
+                if not future.done():
+                    logging.warning(f"Thread {future} did not complete its task.")
+            with open(filename, "r") as f:
+                items = list(ijson.items(f, "item"))
+                for batch in split_data(items, THREAD_BATCH_SIZE):
+                    futures.append(
+                        executor.submit(process_batch, batch, progress_queue)
+                    )
+    except Exception as e:
+        logging.error(f"Error processing data with ThreadPoolExecutor: {e}")
+        return
 
-        # Aggregate the progress from all threads into a single progress bar
-        processed_docs = 0
-        with click.progressbar(
-            length=total_docs,
-            label="Importing documents",
-            fill_char=click.style("▌", fg="cyan"),
-            empty_char=" ",
-            show_percent=True,
-            show_eta=True,
-            show_pos=True,
-            width=20,
-        ) as bar:
-            while processed_docs < total_docs:
-                batch_processed = progress_queue.get()
+    # Aggregate the progress from all threads into a single progress bar
+    processed_docs = 0
+
+    with click.progressbar(
+        length=total_docs,
+        label="Importing documents",
+        fill_char=click.style("▌", fg="cyan"),
+        empty_char=" ",
+        show_percent=True,
+        show_eta=True,
+        show_pos=True,
+        width=20,
+    ) as bar:
+        while processed_docs < total_docs:
+            try:
+                logging.debug(
+                    f"Current size of progress_queue: {progress_queue.qsize()}"
+                )
+                batch_processed = progress_queue.get(timeout=60)
                 processed_docs += batch_processed
                 bar.update(batch_processed)
+            except queue.Empty:
+                logging.error(
+                    "Timeout waiting for progress_queue. Possible deadlock or thread issue."
+                )
+                break
+    # Restore the original logging level
+    logging.getLogger().setLevel(current_log_level)
 
 
 @cli.command()
@@ -167,7 +241,7 @@ def migrate_core(db, col, input, key, threads):
     default=4,
     help="Number of threads to use for migration.",
 )
-def migrate(db=None, col=None, input=None, key=None, threads=None):
+def migrate(db=None, col=None, input=None, key=None, threads=None, update_option=False):
     if not db:
         db = click.prompt("Name of the target ArangoDB database", type=str)
     if not col:
@@ -185,7 +259,7 @@ def migrate(db=None, col=None, input=None, key=None, threads=None):
             "Number of threads to use for migration", type=int, default=4
         )
 
-    migrate_core(db, col, input, key, threads)
+    migrate_core(db, col, input, key, threads, update_option)
     print("Migration completed!")
 
 
@@ -216,7 +290,14 @@ def migrate(db=None, col=None, input=None, key=None, threads=None):
     default=4,
     help="Number of threads to use for migration.",
 )
-def migrate_bulk(db=None, dir=None, key=None, threads=None):
+@click.option(
+    "--update",
+    "-u",
+    "update_option",
+    is_flag=True,
+    help="Only add new documents if set.",
+)
+def migrate_bulk(db=None, dir=None, key=None, threads=None, update_option=False):
     if not db:
         db = click.prompt("Name of the target ArangoDB database", type=str)
     if not dir:
@@ -240,7 +321,15 @@ def migrate_bulk(db=None, dir=None, key=None, threads=None):
 
     for json_file in json_files:
         col = os.path.splitext(os.path.basename(json_file))[0]
-        migrate_core(db, col, json_file, key, threads)
+        if collection_exists(db, col):
+            print(f"Collection {col} already exists. Skipping...")
+            continue
+        print(f"Processing collection: {col}")
+        with open("mongo2arango_bulk_import.log", "a") as log_file:
+            log_file.write(f"Started importing {col}\n")
+        migrate_core(db, col, json_file, key, threads, update_option=True)
+        with open("mongo2arango_bulk_import.log", "a") as log_file:
+            log_file.write(f"Successfully imported {col}\n")
         processed_collections += 1
         print(f"Processed {processed_collections}/{total_collections} collections.")
 
@@ -251,6 +340,12 @@ def check_env_vars():
             "Please run 'mongo2arango login' to set up your ArangoDB credentials."
         )
         exit(1)
+
+
+def collection_exists(db_name, col_name):
+    client = ArangoClient(hosts=ARANGODB_HOST, serializer=dumps, deserializer=loads)
+    _db = client.db(db_name, username=ARANGODB_USER, password=ARANGODB_PW)
+    return _db.has_collection(col_name)
 
 
 if __name__ == "__main__":
