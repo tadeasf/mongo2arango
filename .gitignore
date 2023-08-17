@@ -7,6 +7,10 @@ dist/*
 .venv/
 config_mine.py
 poetry.lock
+/mongo2arango/logs/*
+/deprecated
+data_mongo/*
+
 # C extensions
 *.so
 bi-data-283513-93a280cec907.json

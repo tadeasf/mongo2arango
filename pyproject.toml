@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "mongo2arango"
-version = "0.2.0"
+version = "0.2.2"
 license = "MIT"
 description = "A tool to migrate data from MongoDB to ArangoDB."
 authors = ["tadeasf <taddy.fort@gmail.com>"]
@@ -23,6 +23,7 @@ python-dotenv = "^1.0.0"
 ijson = "^3.2.3"
 simplejson = "^3.19.1"
 click = "^8.1.6"
+tqdm = "^4.66.1"
 
 [tool.poetry.scripts]
 mongo2arango = 'mongo2arango.mongo2arango_cli:cli'
