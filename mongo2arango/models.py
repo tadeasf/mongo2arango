@@ -45,6 +45,7 @@ class UserRole(Collection):
     _key = String(unique=True)
     userId = UUID(unique=True)
     roles = List(String())
+    createdAt = DateTime()
 
 
 class Assignation(Collection):
@@ -52,6 +53,7 @@ class Assignation(Collection):
     _key = String(unique=True)
     userId = String(unique=True)
     orderId = String(unique=True)
+    createdAt = DateTime()
     # ... other fields ...
 
 
