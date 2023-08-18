@@ -7,8 +7,6 @@ from arango_orm.fields import (
     Boolean,
     Int,
     Float,
-    UUID,
-    Mapping,
 )
 
 # Collections
@@ -23,10 +21,10 @@ class User(Collection):
 class Order(Collection):
     __collection__ = "orders"
     _key = String(unique=True)
-    userId = UUID(unique=True)
-    destinationLocationId = UUID(unique=True)
-    originLocationId = UUID(unique=True)
-    routeId = UUID(unique=True)
+    userId = String(unique=True)
+    destinationLocationId = String(unique=True)
+    originLocationId = String(unique=True)
+    routeId = String(unique=True)
     passengers = List(Dict())
     automaticEmails = List(Dict())
     vehicleTypesPricesFees = List(Dict())
@@ -43,7 +41,7 @@ class Order(Collection):
 class UserRole(Collection):
     __collection__ = "userRoles"
     _key = String(unique=True)
-    userId = UUID(unique=True)
+    userId = String(unique=True)
     roles = List(String())
     createdAt = DateTime()
 
@@ -61,8 +59,8 @@ class CustomerFeedback(Collection):
     __collection__ = "customerFeedbacks"
     _key = String(unique=True)
     orderId = String(unique=True)
-    userId = String(unique=True)
-    textScore = String()
+    driverUserId = String(unique=True)  # Updated field
+    textScore = Int()
     text = String()
 
 
@@ -82,8 +80,8 @@ class Country(Collection):
 class Route(Collection):
     __collection__ = "routes"
     _key = String(unique=True)
-    destinationLocation = List(Dict(key="_id"))
-    originLocation = List(Dict(key="_id"))
+    destinationLocationId = String(unique=True)
+    originLocationId = String(unique=True)
     # ... other fields ...
 
 
@@ -120,7 +118,7 @@ class AssignationOrder(Relation):
 class FeedbackForDriver(Relation):
     __collection__ = "feedback_for_driver"
     _from = String()  # customerFeedbacks._key
-    _to = String()  # users._id
+    _to = String()  # users._id (for drivers)
 
 
 class OrderLocation(Relation):
