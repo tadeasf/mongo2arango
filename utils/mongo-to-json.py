@@ -17,7 +17,14 @@ COLLECTIONS_TO_EXPORT = [
     #    "assignationOffers",
     #    "assignationOffers_report_view",
     #    "assignationPayouts",
-    #    "assignations",
+    "assignations",
+]
+COLLECTIONS_TO_EXPORT_FULL = [
+    #    "assignationOfferClaims",
+    #    "assignationOffers",
+    #    "assignationOffers_report_view",
+    #    "assignationPayouts",
+    "assignations",
     #    "chargebacks",
     #    "compensations",
     "countries",
@@ -68,15 +75,13 @@ COLLECTIONS_TO_EXPORT = [
     "vehicleModels",
     "vehicles",
 ]
-EXPORT_DIR = (
-    "/Users/tadeasfort/Documents/pythonJSprojects/gitLab/mongo2arango/data_mongo"
-)
+EXPORT_DIR = "/home/tadeas/mongo2arango/data_mongo-4K/"
 
-BATCH_SIZE = 8000
+BATCH_SIZE = 4000
 
 
 def get_collection_count(collection_name):
-    cmd = ["mongo", MONGODB_URI, "--eval", f"db.{collection_name}.count()"]
+    cmd = ["mongosh", MONGODB_URI, "--eval", f"db.{collection_name}.count()"]
     process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     stdout, stderr = process.communicate()
     if process.returncode != 0:
@@ -149,7 +154,7 @@ def export_collections_threaded(collections, main_pbar, threads):
 @click.option(
     "-t",
     "--threads",
-    default=os.cpu_count(),
+    default=1,  # os.cpu_count()
     help="Number of threads to use for downloading.",
 )
 def main(threads):

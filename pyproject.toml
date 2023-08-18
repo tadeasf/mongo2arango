@@ -24,6 +24,7 @@ ijson = "^3.2.3"
 simplejson = "^3.19.1"
 click = "^8.1.6"
 tqdm = "^4.66.1"
+orjson = "^3.9.5"
 
 [tool.poetry.scripts]
 mongo2arango = 'mongo2arango.mongo2arango_cli:cli'

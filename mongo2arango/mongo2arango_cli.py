@@ -1,6 +1,6 @@
 import click
 from simplejson import dumps, loads
-import ijson
+import orjson
 from arango_orm import Database, Collection
 from arango_orm.fields import Field
 from arango import ArangoClient
@@ -16,35 +16,80 @@ from datetime import datetime
 
 # Configure the logger
 log_file = "./logs/migration.log"
-log_handler = RotatingFileHandler(
-    log_file, maxBytes=5e6, backupCount=4
-)  # 5MB per log file, keep 4 backups
+log_handler = RotatingFileHandler(log_file, maxBytes=5e6, backupCount=4)
 log_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 log_handler.setFormatter(log_formatter)
 
 logger = logging.getLogger()
 logger.addHandler(log_handler)
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.DEBUG)  # Set logging level to WARNING
 
 
 def is_mongo_date(value):
-    return isinstance(value, dict) and "$date" in value
+    return isinstance(value, dict) and ("$date" in value or "$numberLong" in value)
 
 
 def convert_mongo_date(value):
     try:
-        # Extract the date up to the seconds (ignoring milliseconds)
-        date_str = value["$date"][:19]
+        if "$date" in value:
+            # Ensure that value["$date"] is a string
+            if not isinstance(value["$date"], str):
+                logging.error(
+                    f"Expected a string for MongoDB date, but got {type(value['$date'])}: {value['$date']}"
+                )
+                return None
 
-        # Convert to datetime
-        dt = datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S")
+            # Extract the date up to the seconds (ignoring milliseconds)
+            date_str = value["$date"][:19]
 
-        # Return the date in ISO format string
-        return dt.isoformat()
+            # Convert to datetime
+            dt = datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S")
 
+            # Return the date in ISO format string with '.000Z' appended
+            return dt.isoformat() + ".000Z"
+        elif "$numberLong" in value:
+            # Convert the $numberLong value to a datetime
+            timestamp = int(value["$numberLong"]) / 1000  # Convert to seconds
+            dt = datetime.utcfromtimestamp(timestamp)
+
+            # Return the date in ISO format string with '.000Z' appended
+            return dt.isoformat() + ".000Z"
     except Exception as e:
         logging.error(f"Error converting MongoDB date: {e}")
         return None
+
+
+def bulk_migration(db, dir, key="_id"):
+    logging.info(f"Starting bulk migration for directory: {dir}")  # Debug log
+    try:
+        collection_dirs = [
+            sub_dir
+            for sub_dir in os.listdir(dir)
+            if os.path.isdir(os.path.join(dir, sub_dir))
+        ]
+
+        for collection_dir in collection_dirs:
+            col = collection_dir
+            col_dir = os.path.join(dir, collection_dir)
+
+            json_files = glob.glob(os.path.join(col_dir, "*.json"))
+
+            for json_file in json_files:
+                with open("mongo2arango_bulk_import.log", "a") as log_file:
+                    log_file.write(f"Started importing from {json_file}\n")
+                migrate_core(db, col, json_file, key)
+                with open("mongo2arango_bulk_import.log", "a") as log_file:
+                    log_file.write(f"Successfully imported from {json_file}\n")
+    except Exception as e:
+        logging.error(f"Error in bulk_migration: {e}")
+
+
+# Define constants for the number of threads
+PROCESSING_THREADS = 4
+UPLOADING_THREADS = 4
+THREAD_BATCH_SIZE = 1000
+UPLOAD_BATCH_SIZE = 1000
+MAX_DOCS_IN_MEMORY = THREAD_BATCH_SIZE * 10
 
 
 @click.group()
@@ -78,30 +123,25 @@ ARANGODB_USER = os.environ.get("ARANGODB_USER")
 ARANGODB_PW = os.environ.get("ARANGODB_PW")
 
 
-def migrate_core(db, col, input, key, threads):
+def migrate_core(db, col, input, key):
     logging.info(f"Starting migration for collection: {col}")
     try:
         # ArangoDB connection
         client = ArangoClient(hosts=ARANGODB_HOST, serializer=dumps, deserializer=loads)
-        # Connect to the "_system" database to check if the specified database exists
         system_db = client.db("_system", username=ARANGODB_USER, password=ARANGODB_PW)
         if not system_db.has_database(db):
             system_db.create_database(db)
 
-        # Now connect to the specified database
         _db = client.db(db, username=ARANGODB_USER, password=ARANGODB_PW)
         target_db = Database(_db)
 
-        # Dynamically create the collection class based on the provided col
         CollectionClass = type(
             col,
             (Collection,),
             {"__collection__": col, "_fields": {}},
         )
 
-        # Check if the collection exists in the database
         if not target_db.has_collection(col):
-            # If it doesn't exist, create the collection
             target_db.create_collection(CollectionClass)
             logging.info(f"Collection {col} created.")
         else:
@@ -109,19 +149,12 @@ def migrate_core(db, col, input, key, threads):
                 f"Collection {col} already exists. Continuing with data insertion..."
             )
 
-        # # Register the collection with the database
-        # if target_db.has_collection(col):
-        #     logging.info(f"Collection {col} already exists. Skipping...")
-        #     return
-        # target_db.create_collection(CollectionClass)
-
         # Define a function to process a batch of documents
-        def process_batch(docs, progress_queue):
+        def process_batch(docs, structure=None, key=key):
             logging.debug(f"Processing batch of {len(docs)} documents.")
             docs_to_insert = []
 
             def recursive_date_conversion(data):
-                """Recursively convert MongoDB date formats in nested structures."""
                 if isinstance(data, dict):
                     for key, value in data.items():
                         if is_mongo_date(value):
@@ -136,46 +169,26 @@ def migrate_core(db, col, input, key, threads):
                             recursive_date_conversion(item)
 
             for doc in docs:
-                # Recursively convert MongoDB dates
-                recursive_date_conversion(doc)
+                if structure:
+                    for key in structure:
+                        if is_mongo_date(doc.get(key)):
+                            doc[key] = convert_mongo_date(doc[key])
+                else:
+                    recursive_date_conversion(doc)
 
-                # Existing logic for _key and _fields
                 CollectionClass._fields = {
                     k: Field(allow_none=True) for k in doc.keys()
                 }
-                if isinstance(doc[key], dict) and "$oid" in doc[key]:
-                    doc["_key"] = doc[key]["$oid"]
-                else:
-                    doc["_key"] = doc[key]
+                doc["_key"] = doc["_id"]
                 del doc[key]
                 entity = CollectionClass(**doc)
                 docs_to_insert.append(entity)
-                if len(docs_to_insert) == BULK_IMPORT_BATCH_SIZE:
-                    target_db.bulk_add(docs_to_insert)
-                    progress_queue.put(len(docs_to_insert))
-                    docs_to_insert = []
-            if docs_to_insert:
-                try:
-                    target_db.bulk_add(docs_to_insert)
-                    progress_queue.put(len(docs_to_insert))
-                    # Comment out the following line to remove the unnecessary log
-                    # logging.debug(f"Added {len(docs_to_insert)} documents to the database.")
-                except Exception as e:
-                    logging.error(f"Error adding documents to the database: {e}")
+            return docs_to_insert
 
         # Load data from the specified JSON file
-        filename = input
-
-        # First, determine the total number of documents to import
-        with open(filename, "r") as f:
-            total_docs = sum(1 for _ in ijson.items(f, "item"))
-
-        # Define the number of threads
-        num_threads = threads
-
-        # Define the two batch sizes
-        THREAD_BATCH_SIZE = total_docs // num_threads
-        BULK_IMPORT_BATCH_SIZE = num_threads * 1000
+        with open(input, "rb") as f:
+            all_data = orjson.loads(f.read())
+            total_docs = len(all_data)
 
         # Split the JSON data into multiple parts for threads
         def split_data(items, batch_size):
@@ -188,55 +201,53 @@ def migrate_core(db, col, input, key, threads):
             if batch:
                 yield batch
 
-        # Create a thread-safe queue to track progress
-        progress_queue = Queue()
+        # Process and upload in chunks of MAX_DOCS_IN_MEMORY
+        for start_idx in range(0, total_docs, MAX_DOCS_IN_MEMORY):
+            data_chunk = all_data[start_idx : start_idx + MAX_DOCS_IN_MEMORY]
+            processed_data = []
 
-        # Start the progress bar immediately
-        with click.progressbar(
-            length=total_docs,
-            label=f"Importing documents from collection {col}",
-            fill_char=click.style("▌", fg="cyan"),
-            empty_char=" ",
-            show_percent=True,
-            show_eta=True,
-            show_pos=True,
-            width=20,
-        ) as bar:
-            # Use a thread pool to process each part concurrently
-            with ThreadPoolExecutor(max_workers=num_threads) as executor:
-                futures = []
-                with open(filename, "r") as f:
-                    # Stream items from the file using ijson
-                    items_stream = ijson.items(f, "item")
-                    for batch in split_data(items_stream, THREAD_BATCH_SIZE):
-                        # Directly submit the batch for processing
-                        futures.append(
-                            executor.submit(process_batch, batch, progress_queue)
-                        )
+            # Dynamically set the length of the progress bar
+            progress_length = min(MAX_DOCS_IN_MEMORY, len(data_chunk))
 
-                # Continuously update the progress bar based on the progress_queue
-                processed_docs = 0
-                while processed_docs < total_docs:
-                    try:
-                        batch_processed = progress_queue.get(timeout=1)
-                        bar.update(batch_processed)
-                        processed_docs += batch_processed
-                    except queue.Empty:
-                        pass
+            # Start the progress bar with the dynamic length
+            with click.progressbar(
+                length=progress_length,
+                label=f"Importing documents from collection {col}",
+                fill_char=click.style("▌", fg="cyan"),
+                empty_char=" ",
+                show_percent=True,
+                show_eta=True,
+                show_pos=True,
+                width=20,
+            ) as bar:
+                # Use a thread pool to process each part concurrently
+                with ThreadPoolExecutor(max_workers=PROCESSING_THREADS) as executor:
+                    futures = [
+                        executor.submit(process_batch, batch)
+                        for batch in split_data(data_chunk, THREAD_BATCH_SIZE)
+                    ]
+                    for future in futures:
+                        processed_data.extend(future.result())
+                        bar.update(
+                            len(future.result())
+                        )  # Update the progress bar by the number of processed documents
 
-                # After ThreadPoolExecutor block
-                for future in futures:
-                    if future.exception():
-                        logging.error(
-                            f"Thread encountered an error: {future.exception()}"
-                        )
-                    if not future.done():
-                        logging.warning(f"Thread {future} did not complete its task.")
+                # Now, upload the processed data using 2 threads
+                with ThreadPoolExecutor(max_workers=UPLOADING_THREADS) as executor:
+                    upload_futures = [
+                        executor.submit(target_db.bulk_add, batch)
+                        for batch in split_data(processed_data, UPLOAD_BATCH_SIZE)
+                    ]
+                    for future in upload_futures:
+                        if future.exception():
+                            logging.error(
+                                f"Upload encountered an error: {future.exception()}"
+                            )
+                        else:
+                            bar.update(
+                                len(future.result())
+                            )  # Update the progress bar by the number of uploaded documents
 
-                # Continue updating the progress bar until all documents are processed
-                while not progress_queue.empty():
-                    batch_processed = progress_queue.get_nowait()
-                    bar.update(batch_processed)
     except Exception as e:
         logging.error(f"Error in migrate_core: {e}")
 
@@ -261,17 +272,9 @@ def migrate_core(db, col, input, key, threads):
     required=False,
     type=str,
     default="_id",
-    help="Name of the field to use as the ArangoDB document key.",
+    help="Name of the MongoDB field to map as the ArangoDB document key.",
 )
-@click.option(
-    "--threads",
-    "-t",
-    required=False,
-    type=int,
-    default=4,
-    help="Number of threads to use for migration.",
-)
-def migrate(db=None, col=None, input=None, key=None, threads=None):
+def migrate(db=None, col=None, input=None, key="_id"):
     if not db:
         db = click.prompt("Name of the target ArangoDB database", type=str)
     if not col:
@@ -284,12 +287,8 @@ def migrate(db=None, col=None, input=None, key=None, threads=None):
             type=str,
             default="_id",
         )
-    if not threads:
-        threads = click.prompt(
-            "Number of threads to use for migration", type=int, default=4
-        )
 
-    migrate_core(db, col, input, key, threads)
+    migrate_core(db, col, input, key)
     print("Migration completed!")
 
 
@@ -312,50 +311,14 @@ def migrate(db=None, col=None, input=None, key=None, threads=None):
     default="_id",
     help="Name of the field to use as the ArangoDB document key.",
 )
-@click.option(
-    "--threads",
-    "-t",
-    required=False,
-    type=int,
-    default=4,
-    help="Number of threads to use for migration.",
-)
-def migrate_bulk(db=None, dir=None, key=None, threads=None):
+def migrate_bulk(db=None, dir=None, key="_id"):
     if not db:
         db = click.prompt("Name of the target ArangoDB database", type=str)
     if not dir:
         dir = click.prompt(
             "Directory containing JSON files for bulk migration", type=str
         )
-    if not threads:
-        threads = click.prompt(
-            "Number of threads to use for migration", type=int, default=4
-        )
-    try:
-        # Get a list of subdirectories (collection names)
-        collection_dirs = [
-            sub_dir
-            for sub_dir in os.listdir(dir)
-            if os.path.isdir(os.path.join(dir, sub_dir))
-        ]
-
-        for collection_dir in collection_dirs:
-            col = collection_dir  # Collection name is the same as the directory name
-            col_dir = os.path.join(dir, collection_dir)
-
-            json_files = glob.glob(os.path.join(col_dir, "*.json"))
-            total_files = len(json_files)
-            processed_files = 0
-
-            for json_file in json_files:
-                with open("mongo2arango_bulk_import.log", "a") as log_file:
-                    log_file.write(f"Started importing from {json_file}\n")
-                migrate_core(db, col, json_file, key, threads)  # Using "_id" as the key
-                with open("mongo2arango_bulk_import.log", "a") as log_file:
-                    log_file.write(f"Successfully imported from {json_file}\n")
-                processed_files += 1
-    except Exception as e:
-        logging.error(f"Error in migrate_bulk: {e}")
+    bulk_migration(db, dir, key)
 
 
 @cli.command()
@@ -377,44 +340,26 @@ def migrate_bulk(db=None, dir=None, key=None, threads=None):
     default="_id",
     help="Name of the field to use as the ArangoDB document key.",
 )
-@click.option(
-    "--threads",
-    "-t",
-    required=False,
-    type=int,
-    default=4,
-    help="Number of threads to use for migration.",
-)
-def migrate_small(db=None, dir=None, key=None, threads=None):
+def migrate_small(db=None, dir=None, key="_id"):
     if not db:
         db = click.prompt("Name of the target ArangoDB database", type=str)
     if not dir:
         dir = click.prompt(
             "Directory containing JSON files for small-scale migration", type=str
         )
-    if not threads:
-        threads = click.prompt(
-            "Number of threads to use for migration", type=int, default=4
-        )
 
     json_files = glob.glob(os.path.join(dir, "*.json"))
-    total_files = len(json_files)
-    processed_files = 0
 
     for json_file in json_files:
-        col = os.path.splitext(os.path.basename(json_file))[
-            0
-        ]  # Extract collection name from file name
+        col = os.path.splitext(os.path.basename(json_file))[0]
 
         with open("mongo2arango_small_migration.log", "a") as log_file:
             log_file.write(f"Started importing from {json_file}\n")
 
-        migrate_core(db, col, json_file, key, threads)  # Using "_id" as the key
+        migrate_core(db, col, json_file, key)
 
         with open("mongo2arango_small_migration.log", "a") as log_file:
             log_file.write(f"Successfully imported from {json_file}\n")
-
-        processed_files += 1
 
 
 def check_env_vars():

@@ -9,8 +9,9 @@ config_mine.py
 poetry.lock
 /mongo2arango/logs/*
 /deprecated
-data_mongo/*
-
+data_mongo/
+collections.json
+data_mongo-4K/
 # C extensions
 *.so
 bi-data-283513-93a280cec907.json

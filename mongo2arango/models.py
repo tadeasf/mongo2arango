@@ -16,24 +16,24 @@ from arango_orm.fields import (
 
 class User(Collection):
     __collection__ = "users"
-    _key = String()
+    _key = String(unique=True)
     # ... other fields ...
 
 
 class Order(Collection):
     __collection__ = "orders"
-    _key = String()
-    userId = UUID()
-    destinationLocationId = UUID()
-    originLocationId = UUID()
-    routeId = UUID()
+    _key = String(unique=True)
+    userId = UUID(unique=True)
+    destinationLocationId = UUID(unique=True)
+    originLocationId = UUID(unique=True)
+    routeId = UUID(unique=True)
     passengers = List(Dict())
     automaticEmails = List(Dict())
     vehicleTypesPricesFees = List(Dict())
-    confirmedAt = Mapping(keys="$date", values=DateTime(), allow_none=True)
-    createdAt = Mapping(keys="$date", values=DateTime())
-    acceptedAt = Mapping(keys="$date", values=DateTime(), allow_none=True)
-    departureAt = Mapping(keys="$date", values=DateTime())
+    confirmedAt = DateTime(allow_none=True)
+    createdAt = DateTime()
+    acceptedAt = DateTime(allow_none=True)
+    departureAt = DateTime()
     requestHeader = Dict()
     originLocation = Dict()
     contentLocations = List(Dict())
@@ -42,44 +42,46 @@ class Order(Collection):
 
 class UserRole(Collection):
     __collection__ = "userRoles"
-    _key = String()
-    userId = UUID()
+    _key = String(unique=True)
+    userId = UUID(unique=True)
     roles = List(String())
 
 
 class Assignation(Collection):
     __collection__ = "assignations"
-    _key = String()
-    userId = String()
-    orderId = String()
+    _key = String(unique=True)
+    userId = String(unique=True)
+    orderId = String(unique=True)
     # ... other fields ...
 
 
 class CustomerFeedback(Collection):
     __collection__ = "customerFeedbacks"
-    _key = String()
-    orderId = String()
-    userId = String()
+    _key = String(unique=True)
+    orderId = String(unique=True)
+    userId = String(unique=True)
     textScore = String()
     text = String()
 
 
 class Location(Collection):
     __collection__ = "locations"
-    _key = String()
+    _key = String(unique=True)
     name = String()
     countryId = String()
 
 
 class Country(Collection):
     __collection__ = "countries"
-    _key = String()
+    _key = String(unique=True)
     englishName = String()
 
 
 class Route(Collection):
     __collection__ = "routes"
-    _key = String()
+    _key = String(unique=True)
+    destinationLocation = List(Dict(key="_id"))
+    originLocation = List(Dict(key="_id"))
     # ... other fields ...
 
 
