@@ -14,7 +14,15 @@ from models import (
 from dotenv import load_dotenv
 import os
 import json
+import logging
+from arango.exceptions import ArangoError
 
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[logging.FileHandler("./logs/wetRun.log"), logging.StreamHandler()],
+)
 load_dotenv()
 ARANGODB_HOST = os.environ.get("ARANGODB_HOST")
 ARANGODB_USER = os.environ.get("ARANGODB_USER")
@@ -51,7 +59,7 @@ def process_users_orders(users, orders):
             if order.userId == user._key:
                 connection_stats["UserOrder"]["validated"] += 1
                 user_id = f"users/{user._key}"  # Transform _key to _id for user
-                dry_create_relationship(CreatedOrder, user_id, order.userId)
+                create_relationship(CreatedOrder, user_id, order.userId)
             else:
                 connection_stats["UserOrder"]["failed"] += 1
 
@@ -77,7 +85,7 @@ def process_order_location_country(orders, locations, countries):
             and location_keys[order.originLocationId] in country_keys
         ):
             connection_stats["OrderLocationCountry"]["validated"] += 1
-            dry_create_relationship(
+            create_relationship(
                 "OrderLocationCountry",
                 order._key,
                 location_keys[order.originLocationId],
@@ -87,7 +95,7 @@ def process_order_location_country(orders, locations, countries):
             and location_keys[order.destinationLocationId] in country_keys
         ):
             connection_stats["OrderLocationCountry"]["validated"] += 1
-            dry_create_relationship(
+            create_relationship(
                 "OrderLocationCountry",
                 order._key,
                 location_keys[order.destinationLocationId],
@@ -145,7 +153,7 @@ def process_user_order_location_country(users, orders, locations, countries):
                     and location_keys[order.originLocationId] in country_keys
                 ):
                     connection_stats["UserOrderLocationCountry"]["validated"] += 1
-                    dry_create_relationship(
+                    create_relationship(
                         "UserOrderLocationCountry",
                         user._key,
                         location_keys[order.originLocationId],
@@ -155,7 +163,7 @@ def process_user_order_location_country(users, orders, locations, countries):
                     and location_keys[order.destinationLocationId] in country_keys
                 ):
                     connection_stats["UserOrderLocationCountry"]["validated"] += 1
-                    dry_create_relationship(
+                    create_relationship(
                         "UserOrderLocationCountry",
                         user._key,
                         location_keys[order.destinationLocationId],
@@ -171,7 +179,7 @@ def process_driver_assignation_order(drivers, assignations, orders):
                 for order in orders:
                     if assignation.orderId == order._key:
                         connection_stats["UserAssignationOrder"]["validated"] += 1
-                        dry_create_relationship(
+                        create_relationship(
                             "UserAssignationOrder",
                             f"users/{driver._key}",
                             f"orders/{order._key}",
@@ -187,7 +195,7 @@ def process_customer_order_assignation(customers, orders, assignations):
                 for assignation in assignations:
                     if assignation.orderId == order._key:
                         connection_stats["UserOrderAssignation"]["validated"] += 1
-                        dry_create_relationship(
+                        create_relationship(
                             "UserOrderAssignation",
                             f"users/{customer._key}",
                             f"assignations/{assignation._key}",
@@ -207,7 +215,7 @@ def process_customer_order_assignation_driver(customers, orders, assignations, d
                                 connection_stats["UserOrderAssignationDriver"][
                                     "validated"
                                 ] += 1
-                                dry_create_relationship(
+                                create_relationship(
                                     "UserOrderAssignationDriver",
                                     f"users/{customer._key}",
                                     f"users/{driver._key}",
@@ -218,10 +226,26 @@ def process_customer_order_assignation_driver(customers, orders, assignations, d
                                 ] += 1
 
 
-def dry_create_relationship(collection, from_id, to_id):
-    # This function simulates the creation of a relationship
-    # In a real scenario, you'd use the ORM to create the relationship
-    print(f"Creating relationship in {collection} from {from_id} to {to_id}")
+def create_relationship(collection_name, from_id, to_id):
+    """
+    Create a relationship in the specified collection from the given _from to _to.
+    """
+    try:
+        collection = db.collection(collection_name)
+        collection.insert({"_from": from_id, "_to": to_id})
+        logging.info(
+            f"Created relationship in {collection_name} from {from_id} to {to_id}"
+        )
+    except ArangoError as e:
+        logging.error(
+            f"Error creating relationship in {collection_name} from {from_id} to {to_id}. Error: {e}"
+        )
+
+
+# def create_relationship(collection, from_id, to_id):
+#     # This function simulates the creation of a relationship
+#     # In a real scenario, you'd use the ORM to create the relationship
+#     print(f"Creating relationship in {collection} from {from_id} to {to_id}")
 
 
 def fetch_data_by_field(collection_class, field_name, field_values):
@@ -235,90 +259,103 @@ def fetch_data_by_field(collection_class, field_name, field_values):
     return data
 
 
-sample_size = 100
-# Randomly sample a subset of users
-sampled_users = (
-    db.query(User).limit(sample_size).all()
-)  # Assuming arango_orm supports random sampling
+def main():
+    # Setup logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        handlers=[logging.FileHandler("./logs/wetRun.log"), logging.StreamHandler()],
+    )
 
-# For each user, find the related entities in other collections
-# For each user, find the related entities in other collections
-for user in sampled_users:
-    related_orders = fetch_data_by_field(Order, "userId", [user._key])
-    order_keys = [order._key for order in related_orders]
-    related_assignations = fetch_data_by_field(Assignation, "orderId", order_keys)
+    load_dotenv()
+    ARANGODB_HOST = os.environ.get("ARANGODB_HOST")
+    ARANGODB_USER = os.environ.get("ARANGODB_USER")
+    ARANGODB_PW = os.environ.get("ARANGODB_PW")
+    DB_NAME = os.environ.get("ARANGODB_DB")
 
-    # Fetching Customer Feedbacks
-    related_feedbacks = fetch_data_by_field(CustomerFeedback, "orderId", order_keys)
+    # ArangoDB connection
+    client = ArangoClient(hosts=ARANGODB_HOST)
+    test_db = client.db(DB_NAME, username=ARANGODB_USER, password=ARANGODB_PW)
+    db = Database(test_db)
 
-    related_locations_keys = list(
-        set(
-            [order.originLocationId for order in related_orders]
-            + [order.destinationLocationId for order in related_orders]
+    all_users = db.query(User).all()
+
+    # sample_size = 10
+    # # Randomly sample a subset of users
+    # all_users = (
+    #     db.query(User).limit(sample_size).all()
+    # )  # Assuming arango_orm supports random sampling
+    for user in all_users:
+        related_orders = fetch_data_by_field(Order, "userId", [user._key])
+        order_keys = [order._key for order in related_orders]
+        related_assignations = fetch_data_by_field(Assignation, "orderId", order_keys)
+        related_feedbacks = fetch_data_by_field(CustomerFeedback, "orderId", order_keys)
+
+        related_locations_keys = list(
+            set(
+                [order.originLocationId for order in related_orders]
+                + [order.destinationLocationId for order in related_orders]
+            )
         )
-    )
-    related_locations = fetch_data_by_field(Location, "_key", related_locations_keys)
+        related_locations = fetch_data_by_field(
+            Location, "_key", related_locations_keys
+        )
 
-    related_routes_keys = [order.routeId for order in related_orders]
-    related_routes = fetch_data_by_field(Route, "_key", related_routes_keys)
+        related_routes_keys = [order.routeId for order in related_orders]
+        related_routes = fetch_data_by_field(Route, "_key", related_routes_keys)
 
-    # Similarly fetch other related entities using _key
-    related_countries_keys = [location.countryId for location in related_locations]
-    related_countries = fetch_data_by_field(Country, "_key", related_countries_keys)
+        related_countries_keys = [location.countryId for location in related_locations]
+        related_countries = fetch_data_by_field(Country, "_key", related_countries_keys)
 
-    # Fetching TravelData
-    related_travel_data_keys = [
-        {
-            "originId": order.originLocationId,
-            "destinationId": order.destinationLocationId,
-        }
-        for order in related_orders
-    ]
-    related_travel_data = []
-    for key_pair in related_travel_data_keys:
-        data = fetch_data_by_field(TravelData, "originId", [key_pair["originId"]])
-        for entry in data:
-            if entry.destinationId == key_pair["destinationId"]:
-                related_travel_data.append(entry)
+        related_travel_data_keys = [
+            {
+                "originId": order.originLocationId,
+                "destinationId": order.destinationLocationId,
+            }
+            for order in related_orders
+        ]
+        related_travel_data = []
+        for key_pair in related_travel_data_keys:
+            data = fetch_data_by_field(TravelData, "originId", [key_pair["originId"]])
+            for entry in data:
+                if entry.destinationId == key_pair["destinationId"]:
+                    related_travel_data.append(entry)
 
-    # Validate the relationships for these entities
-    process_users_orders([user], related_orders)
-    process_order_location_country(related_orders, related_locations, related_countries)
-    process_order_route(related_orders, related_routes)
-    process_order_travel_data(related_orders, related_travel_data)
-    process_user_order_location_country(
-        [user], related_orders, related_locations, related_countries
-    )
-    # Call the new process functions
-    process_driver_assignation_order([user], related_assignations, related_orders)
-    process_customer_order_assignation([user], related_orders, related_assignations)
-    process_customer_order_assignation_driver(
-        [user], related_orders, related_assignations, sampled_users
-    )
+        # Validate the relationships for these entities
+        process_users_orders([user], related_orders)
+        process_order_location_country(
+            related_orders, related_locations, related_countries
+        )
+        process_order_route(related_orders, related_routes)
+        process_order_travel_data(related_orders, related_travel_data)
+        process_user_order_location_country(
+            [user], related_orders, related_locations, related_countries
+        )
+        process_driver_assignation_order([user], related_assignations, related_orders)
+        process_customer_order_assignation([user], related_orders, related_assignations)
+        process_customer_order_assignation_driver(
+            [user], related_orders, related_assignations, all_users
+        )
 
+    # Calculate percentages
+    total_validated = sum([stats["validated"] for stats in connection_stats.values()])
+    total_failed = sum([stats["failed"] for stats in connection_stats.values()])
 
-# Calculate percentages
-print(connection_stats)
+    for connection, stats in connection_stats.items():
+        stats["%_of_total_validated"] = (
+            (stats["validated"] / total_validated) * 100 if total_validated else 0
+        )
+        stats["%_of_total_failed"] = (
+            (stats["failed"] / total_failed) * 100 if total_failed else 0
+        )
 
-total_validated = sum([stats["validated"] for stats in connection_stats.values()])
-total_failed = sum([stats["failed"] for stats in connection_stats.values()])
-
-for connection, stats in connection_stats.items():
-    if total_validated != 0:
-        stats["%_of_total_validated"] = (stats["validated"] / total_validated) * 100
-    else:
-        stats["%_of_total_validated"] = 0
-
-    if total_failed != 0:
-        stats["%_of_total_failed"] = (stats["failed"] / total_failed) * 100
-    else:
-        stats["%_of_total_failed"] = 0
+    # Write to file
+    with open("./logs/connection_stats.json", "w") as f:
+        f.write(json.dumps(connection_stats, indent=4))
 
 
-for connection, stats in connection_stats.items():
-    stats["%_of_total_validated"] = (stats["validated"] / total_validated) * 100
-    stats["%_of_total_failed"] = (stats["failed"] / total_failed) * 100
-
-# Write to file
-with open("./logs/connection_stats.json", "w") as f:
-    f.write(json.dumps(connection_stats, indent=4))
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:
+        logging.error(f"Error: {e}")
