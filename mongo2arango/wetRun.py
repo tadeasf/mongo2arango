@@ -59,7 +59,7 @@ def process_users_orders(users, orders):
             if order.userId == user._key:
                 connection_stats["UserOrder"]["validated"] += 1
                 user_id = f"users/{user._key}"  # Transform _key to _id for user
-                create_relationship(CreatedOrder, user_id, order.userId)
+                create_relationship(CreatedOrder.__collection__, user_id, order.userId)
             else:
                 connection_stats["UserOrder"]["failed"] += 1
 
@@ -358,4 +358,4 @@ if __name__ == "__main__":
     try:
         main()
     except Exception as e:
-        logging.error(f"Error: {e}")
+        logging.error(f"Error: {e}", exc_info=True)
