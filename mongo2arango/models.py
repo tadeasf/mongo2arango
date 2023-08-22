@@ -181,3 +181,10 @@ class UserOrderAssignationDriver(Relation):
     __collection__ = "user_order_assignation_driver"
     _from = String()  # users._key (Customer)
     _to = String()  # users._key (Driver)
+
+
+# Define the ReturningCustomer relationship
+class ReturningCustomer(Relation):
+    __collection__ = "returning_customers"
+    _from = String(required=True)  # User ID
+    _to = String(required=True)  # Subsequent Order ID
