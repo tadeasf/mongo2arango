@@ -6,10 +6,11 @@ import os
 from collections import defaultdict
 
 load_dotenv()
-ARANGODB_HOST = os.environ.get("ARANGODB_HOST")
-ARANGODB_USER = os.environ.get("ARANGODB_USER")
-ARANGODB_PW = os.environ.get("ARANGODB_PW")
-DB_NAME = os.environ.get("ARANGODB_DB")
+ARANGODB_HOST = os.getenv("ARANGODB_HOST")
+ARANGODB_USER = os.getenv("ARANGODB_USER")
+ARANGODB_PW = os.getenv("ARANGODB_PW")
+DB_NAME = os.getenv("ARANGODB_DB")
+
 # ArangoDB connection
 client = ArangoClient(hosts=ARANGODB_HOST)
 db_instance = client.db(DB_NAME, username=ARANGODB_USER, password=ARANGODB_PW)
@@ -30,10 +31,12 @@ for order in orders:
 # Prepare the UserOrderAssignation relationships in bulk
 user_order_assignation_relations = [
     UserOrderAssignation(
-        _from=f"users/{user._key}", _to=f"assignations/{assignations_by_order[order]}"
+        _from=f"users/{user._key}",
+        _to=f"assignations/{assignations_by_order[order_key]}",
     )
     for user in users
-    for order in orders_by_user[user._key]
+    for order_key in orders_by_user[user._key]
+    if order_key in assignations_by_order
 ]
 
 # Add the UserOrderAssignation relationships in bulk

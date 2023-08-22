@@ -28,15 +28,22 @@ location_keys = {
     if location.countryId in country_keys
 }
 
+# Group orders by user
+orders_by_user = defaultdict(list)
+for order in orders:
+    orders_by_user[order.userId].append(order)
+
 # Prepare the UserOrderLocationCountry relationships in bulk
-user_order_location_country_relations = [
-    UserOrderLocationCountry(_from=user._id, _to=location_keys[loc_id])
-    for user in users
-    for order in orders
-    if order.userId == user._key
-    for loc_id in [order.originLocationId, order.destinationLocationId]
-    if loc_id in location_keys
-]
+user_order_location_country_relations = []
+for user in users:
+    user_orders = orders_by_user.get(user._key, [])
+    for order in user_orders:
+        for loc_id in [order.originLocationId, order.destinationLocationId]:
+            if loc_id in location_keys:
+                relation = UserOrderLocationCountry(
+                    _from=user._id, _to=location_keys[loc_id]
+                )
+                user_order_location_country_relations.append(relation)
 
 # Add the UserOrderLocationCountry relationships in bulk
 db.bulk_add(entity_list=user_order_location_country_relations)
