@@ -1,9 +1,8 @@
 from arango import ArangoClient
-from arango_orm import Database, Relation
+from arango_orm import Database
 from mongo2arango.models import User, Order, Location, Country, UserOrderLocationCountry
 from dotenv import load_dotenv
 import os
-import json
 from collections import defaultdict
 
 load_dotenv()
@@ -20,34 +19,23 @@ db = Database(db_instance)
 users = db.query(User).all()
 orders = db.query(Order).all()
 locations = db.query(Location).all()
-countries = db.query(Country).all()
+country_keys = {country._key for country in db.query(Country).all()}
 
 # Mapping location keys to country IDs
-location_keys = {location._key: location.countryId for location in locations}
+location_keys = {
+    location._key: f"countries/{location.countryId}"
+    for location in locations
+    if location.countryId in country_keys
+}
 
 # Prepare the UserOrderLocationCountry relationships in bulk
 user_order_location_country_relations = [
-    UserOrderLocationCountry(_from=user._id, _to=location_keys[order.originLocationId])
+    UserOrderLocationCountry(_from=user._id, _to=location_keys[loc_id])
     for user in users
     for order in orders
     if order.userId == user._key
-    if (
-        order.originLocationId in location_keys
-        and location_keys[order.originLocationId] in location_keys.values()
-    )
-]
-
-user_order_location_country_relations += [
-    UserOrderLocationCountry(
-        _from=user._id, _to=location_keys[order.destinationLocationId]
-    )
-    for user in users
-    for order in orders
-    if order.userId == user._key
-    if (
-        order.destinationLocationId in location_keys
-        and location_keys[order.destinationLocationId] in location_keys.values()
-    )
+    for loc_id in [order.originLocationId, order.destinationLocationId]
+    if loc_id in location_keys
 ]
 
 # Add the UserOrderLocationCountry relationships in bulk

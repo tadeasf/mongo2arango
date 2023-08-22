@@ -1,9 +1,8 @@
 from arango import ArangoClient
-from arango_orm import Database, Relation
+from arango_orm import Database
 from mongo2arango.models import User, Order, Assignation, UserOrderAssignationDriver
 from dotenv import load_dotenv
 import os
-import json
 from collections import defaultdict
 
 load_dotenv()
@@ -17,23 +16,29 @@ db_instance = client.db(DB_NAME, username=ARANGODB_USER, password=ARANGODB_PW)
 db = Database(db_instance)
 
 # Fetch customers, orders, assignations, and drivers
-customers = db.query(User).all()
+users = db.query(User).all()
 orders = db.query(Order).all()
 assignations = db.query(Assignation).all()
-drivers = db.query(User).all()  # Assuming drivers are also in the User collection
+
+# Create mappings
+orders_by_user = defaultdict(list)
+assignations_by_order = defaultdict(list)
+drivers_by_assignation = {a.userId: f"users/{a.userId}" for a in assignations}
+
+for order in orders:
+    orders_by_user[order.userId].append(order._key)
+
+for assignation in assignations:
+    assignations_by_order[assignation.orderId].append(assignation._key)
 
 # Prepare the UserOrderAssignationDriver relationships in bulk
 user_order_assignation_driver_relations = [
     UserOrderAssignationDriver(
-        _from=f"users/{customer._key}", _to=f"users/{driver._key}"
+        _from=f"users/{user._key}", _to=drivers_by_assignation[assignation]
     )
-    for customer in customers
-    for order in orders
-    if order.userId == customer._key
-    for assignation in assignations
-    if assignation.orderId == order._key
-    for driver in drivers
-    if assignation.userId == driver._key
+    for user in users
+    for order in orders_by_user[user._key]
+    for assignation in assignations_by_order[order]
 ]
 
 # Add the UserOrderAssignationDriver relationships in bulk

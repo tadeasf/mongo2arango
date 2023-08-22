@@ -1,9 +1,8 @@
 from arango import ArangoClient
-from arango_orm import Database, Relation
+from arango_orm import Database
 from mongo2arango.models import User, Order, Assignation, UserOrderAssignation
 from dotenv import load_dotenv
 import os
-import json
 from collections import defaultdict
 
 load_dotenv()
@@ -17,20 +16,24 @@ db_instance = client.db(DB_NAME, username=ARANGODB_USER, password=ARANGODB_PW)
 db = Database(db_instance)
 
 # Fetch customers, orders, and assignations
-customers = db.query(User).all()
+users = db.query(User).all()
 orders = db.query(Order).all()
 assignations = db.query(Assignation).all()
+
+# Create mappings
+orders_by_user = defaultdict(list)
+assignations_by_order = {a.orderId: a._key for a in assignations}
+
+for order in orders:
+    orders_by_user[order.userId].append(order._key)
 
 # Prepare the UserOrderAssignation relationships in bulk
 user_order_assignation_relations = [
     UserOrderAssignation(
-        _from=f"users/{customer._key}", _to=f"assignations/{assignation._key}"
+        _from=f"users/{user._key}", _to=f"assignations/{assignations_by_order[order]}"
     )
-    for customer in customers
-    for order in orders
-    if order.userId == customer._key
-    for assignation in assignations
-    if assignation.orderId == order._key
+    for user in users
+    for order in orders_by_user[user._key]
 ]
 
 # Add the UserOrderAssignation relationships in bulk
