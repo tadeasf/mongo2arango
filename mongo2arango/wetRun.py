@@ -10,12 +10,24 @@ from models import (
     Route,
     TravelData,
     CreatedOrder,
+    FeedbackForDriver,
+    OrderLocation,
+    LocationCountry,
+    OrderRoute,
+    OrderTravelData,
+    UserUserRole,
+    UserOrderLocationCountry,
+    UserAssignation,
+    AssignationOrder,
+    UserOrderAssignation,
+    UserOrderAssignationDriver,
 )
 from dotenv import load_dotenv
 import os
 import json
 import logging
 from arango.exceptions import ArangoError
+
 
 # Setup logging
 logging.basicConfig(
@@ -36,19 +48,20 @@ db = Database(test_db)
 
 # Initialize counters and example lists
 connection_stats = {
-    "UserOrder": {"validated": 0, "failed": 0},
-    "UserAssignationOrder": {"validated": 0, "failed": 0},
-    "FeedbackOrderUser": {"validated": 0, "failed": 0},
-    "OrderLocationCountry": {"validated": 0, "failed": 0},
-    "OrderRoute": {"validated": 0, "failed": 0},
-    "OrderTravelData": {"validated": 0, "failed": 0},
-    "UserRoleUser": {"validated": 0, "failed": 0},
-    "CustomerFeedback": {"validated": 0, "failed": 0},
-    "UserOrderLocationCountry": {"validated": 0, "failed": 0},
-    "UserAssignationOrder": {"validated": 0, "failed": 0},
-    "UserOrderAssignation": {"validated": 0, "failed": 0},
-    "UserOrderAssignationDriver": {"validated": 0, "failed": 0},
+    CreatedOrder.__collection__: {"validated": 0, "failed": 0},
+    UserAssignation.__collection__: {"validated": 0, "failed": 0},
+    FeedbackForDriver.__collection__: {"validated": 0, "failed": 0},
+    OrderLocation.__collection__: {"validated": 0, "failed": 0},
+    LocationCountry.__collection__: {"validated": 0, "failed": 0},
+    OrderRoute.__collection__: {"validated": 0, "failed": 0},
+    OrderTravelData.__collection__: {"validated": 0, "failed": 0},
+    UserUserRole.__collection__: {"validated": 0, "failed": 0},
+    UserOrderLocationCountry.__collection__: {"validated": 0, "failed": 0},
+    AssignationOrder.__collection__: {"validated": 0, "failed": 0},
+    UserOrderAssignation.__collection__: {"validated": 0, "failed": 0},
+    UserOrderAssignationDriver.__collection__: {"validated": 0, "failed": 0},
 }
+
 
 # Simulate creating relationships without actually doing it
 
@@ -57,11 +70,11 @@ def process_users_orders(users, orders):
     for user in users:
         for order in orders:
             if order.userId == user._key:
-                connection_stats["UserOrder"]["validated"] += 1
+                connection_stats[CreatedOrder.__collection__]["validated"] += 1
                 user_id = f"users/{user._key}"  # Transform _key to _id for user
                 create_relationship(CreatedOrder.__collection__, user_id, order.userId)
             else:
-                connection_stats["UserOrder"]["failed"] += 1
+                connection_stats[CreatedOrder.__collection__]["failed"] += 1
 
 
 def process_customer_feedback_order_user(customerFeedbacks, orders, users):
@@ -70,9 +83,9 @@ def process_customer_feedback_order_user(customerFeedbacks, orders, users):
 
     for feedback in customerFeedbacks:
         if feedback.orderId in order_keys and feedback.driverUserId in user_keys:
-            connection_stats["FeedbackOrderUser"]["validated"] += 1
+            connection_stats["feedback_for_driver"]["validated"] += 1
         else:
-            connection_stats["FeedbackOrderUser"]["failed"] += 1
+            connection_stats["feedback_for_driver"]["failed"] += 1
 
 
 def process_order_location_country(orders, locations, countries):
