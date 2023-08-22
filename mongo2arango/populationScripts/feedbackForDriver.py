@@ -27,13 +27,15 @@ users = db.query(User).all()
 # Create a mapping of driverUserId to feedbacks
 feedbacks_by_driver_user_id = defaultdict(list)
 for feedback in feedbacks:
-    feedbacks_by_driver_user_id[feedback.driverUserId].append(feedback._id)
+    feedbacks_by_driver_user_id[feedback.driverUserId].append(
+        feedback._id
+    )  # Storing feedback _id
 
 # Prepare the FeedbackForDriver relationships in bulk
 feedback_for_driver_relations = []
 for user in users:
-    user_id = f"users/{user._key}"  # Transform _key to _id for user
-    for feedback_id in feedbacks_by_driver_user_id[user._key]:
+    user_id = f"users/{user._key}"  # Using _key to create _id for user
+    for feedback_id in feedbacks_by_driver_user_id[user._key]:  # Access by user _key
         feedback_for_driver_relations.append(
             FeedbackForDriver(_from=user_id, _to=feedback_id)
         )

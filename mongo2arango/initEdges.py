@@ -50,6 +50,6 @@ edge_collections = [
 
 for edge_collection in edge_collections:
     if not db.has_collection(edge_collection.__collection__):
-        db.create_collection(edge_collection)
+        db.create_collection(edge_collection, edge=True)
 
 print("Edge collections initialized successfully!")

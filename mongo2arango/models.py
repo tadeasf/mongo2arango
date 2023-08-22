@@ -1,4 +1,4 @@
-from arango_orm import Collection, Relation
+from arango_orm import Collection, Relation, Graph, GraphConnection
 from arango_orm.fields import String, List, Dict, DateTime, Boolean, Float, Int
 
 # Collections
@@ -194,3 +194,12 @@ class UserCountry(Relation):
     __collection__ = "user_countries"
     _from = String()
     _to = String()
+
+
+class CustomerGraph(Graph):
+    __graph__ = "customer_graph"
+    graph_connections = [
+        GraphConnection(User, UserCountry, Country),
+        GraphConnection(User, UserOrderLocationCountry, Country),
+        GraphConnection(CustomerFeedback, FeedbackForDriver, User),
+    ]
