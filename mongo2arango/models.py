@@ -188,3 +188,9 @@ class ReturningCustomer(Relation):
     __collection__ = "returning_customers"
     _from = String(required=True)  # User ID
     _to = String(required=True)  # Subsequent Order ID
+
+
+class UserCountry(Relation):
+    __collection__ = "user_countries"
+    _from = String()
+    _to = String()

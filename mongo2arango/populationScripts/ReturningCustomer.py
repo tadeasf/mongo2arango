@@ -2,7 +2,6 @@ from arango import ArangoClient
 from arango_orm import Database
 from mongo2arango.models import User, Order, ReturningCustomer
 from collections import defaultdict
-from multiprocessing import Pool
 from datetime import datetime
 import os
 import time
@@ -29,19 +28,16 @@ BATCH_SIZE = 5000  # Size of each batch
 
 
 def process_users(users_batch):
-    # Connect to ArangoDB for this process
-    client = ArangoClient(hosts=ARANGODB_HOST)
-    db_instance = client.db(DB_NAME, username=ARANGODB_USER, password=ARANGODB_PW)
-    db = Database(db_instance)
-
     # Fetch orders for users in this batch
     user_keys = [user._key for user in users_batch]
-    orders = db.query(Order).filter(lambda o: o.userId in user_keys).all()
 
-    # Group orders by user
+    # Create a dictionary to store orders by userId
     orders_by_user = defaultdict(list)
-    for order in orders:
-        orders_by_user[order.userId].append(order)
+
+    # Iterate through the user_keys and query orders for each user
+    for user_key in user_keys:
+        orders = db.query(Order).filter("userId == @user_key", user_key=user_key).all()
+        orders_by_user[user_key] = orders
 
     relationships = []
     for user in users_batch:
@@ -57,9 +53,7 @@ def process_users(users_batch):
                 last_season is None or current_season != last_season
             ):
                 relationships.append(
-                    ReturningCustomer(
-                        _from=user._key, _to=next_order._key
-                    )  # Use _key instead of _id
+                    ReturningCustomer(_from=user._key, _to=next_order._key)
                 )
                 last_season = current_season
 
@@ -76,13 +70,14 @@ orders = db.query(Order).all()
 # Create batches of users
 user_batches = [users[i : i + BATCH_SIZE] for i in range(0, len(users), BATCH_SIZE)]
 
-# Use a process pool to process the batches in parallel
+# Process the user batches sequentially
 start_time = time.time()
-with Pool() as pool:
-    results = pool.map(process_users, user_batches)
+total_relationships = 0
+for user_batch in user_batches:
+    total_relationships += process_users(user_batch)
 end_time = time.time()
 print(f"Total processing time: {end_time - start_time} seconds.")
 
 # Print the total number of relationships created
 print("Relationships populated successfully!")
-print(f"Total relationships created: {sum(results)}")
+print(f"Total relationships created: {total_relationships}")

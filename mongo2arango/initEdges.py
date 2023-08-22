@@ -14,6 +14,7 @@ from models import (
     UserOrderAssignation,
     UserOrderAssignationDriver,
     ReturningCustomer,
+    UserCountry,
 )
 from dotenv import load_dotenv
 import os
@@ -44,6 +45,7 @@ edge_collections = [
     UserOrderAssignation,
     UserOrderAssignationDriver,
     ReturningCustomer,
+    UserCountry,
 ]
 
 for edge_collection in edge_collections:
